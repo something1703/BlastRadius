@@ -9,6 +9,7 @@ import type { Span } from "@opentelemetry/api";
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import http from "node:http";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -25,6 +26,34 @@ import pino from "pino";
 
 const log = pino({ name: "blast-radius-worker" });
 const tracer = getTracer();
+
+// ── Cloud Run health server ───────────────────────────────────────────────────
+// Bind to PORT immediately so Cloud Run's startup probe passes right away.
+// The BullMQ worker creation is deferred until Coral sources are provisioned.
+const PORT = process.env.PORT ?? "8080";
+const healthServer = http.createServer((_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true, service: "blast-radius-worker", ts: new Date().toISOString() }));
+});
+healthServer.listen(PORT, () => {
+  log.info(`Health server listening on :${PORT}`);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Coral source provisioning delay ──────────────────────────────────────────
+// entrypoint.sh runs `coral source add` in the BACKGROUND so Cloud Run's
+// startup probe (above) sees a bound port immediately. But we must NOT start
+// consuming BullMQ jobs until those background processes finish — otherwise
+// Coral has no registered sources and every query returns "Table not found".
+// CORAL_PROVISION_DELAY_MS controls the wait (default 35s).
+// Set to 0 locally (where coral sources are pre-configured).
+const PROVISION_DELAY = parseInt(process.env.CORAL_PROVISION_DELAY_MS ?? "35000", 10);
+if (PROVISION_DELAY > 0) {
+  log.info(`⏳ Waiting ${PROVISION_DELAY / 1000}s for Coral sources to finish provisioning...`);
+  await new Promise<void>((resolve) => setTimeout(resolve, PROVISION_DELAY));
+  log.info("✅ Coral provision wait complete — starting job consumer");
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const redis = createRedisConnection();
 
@@ -207,20 +236,5 @@ worker.on("error", (err) => {
 
 // Start the source health checker as a co-process
 startHealthWorker();
-
-// ── Cloud Run health server ───────────────────────────────────────────────────
-// Cloud Run requires the container to listen on PORT within the startup timeout.
-// The BullMQ worker itself doesn't serve HTTP, so we bind a minimal server here.
-import http from "node:http";
-
-const PORT = process.env.PORT ?? "8080";
-const healthServer = http.createServer((_req, res) => {
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ ok: true, service: "blast-radius-worker", ts: new Date().toISOString() }));
-});
-healthServer.listen(PORT, () => {
-  log.info(`Health server listening on :${PORT}`);
-});
-// ─────────────────────────────────────────────────────────────────────────────
 
 log.info("🏴‍☠️ Blast Radius worker started, waiting for jobs...");
