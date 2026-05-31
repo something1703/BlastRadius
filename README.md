@@ -1,135 +1,194 @@
 # Blast Radius
 
-> **AI-powered incident analysis — know exactly what broke production in seconds.**
+> **The on-call engineer's autopilot. Federated SQL across your entire SaaS stack, driven by an AI agent, returning causal verdicts in 60 seconds.**
 
-Blast Radius is an autonomous agent that correlates LaunchDarkly flag flips, Vercel deploys, and Sentry errors using **federated SQL across all three sources simultaneously** via the Coral MCP protocol. When an incident happens, it fires a webhook, the Gemini agent writes live cross-source JOIN queries, and the verdict streams back to your dashboard in real-time.
+When production breaks at 3am, you open five tabs — LaunchDarkly, Sentry, Vercel, your APM, Slack — and start mentally correlating timestamps to figure out what caused it. Blast Radius automates the entire investigation.
 
----
-
-## Try the Live Demo
-
-**Live Dashboard:** https://github.com/something1703/BlastRadius
-
-> Judges: You do not need to connect your own accounts.
-
-1. Open the dashboard — you'll see a live feed of investigations already running.
-2. Click **"Simulate Webhook"** to get a ready-to-run `cURL` command.
-3. Paste it into your terminal to fire a real LaunchDarkly or Vercel event at the live API.
-4. Watch the new row appear instantly via Supabase Realtime, then see the Gemini verdict slide in ~60 seconds.
-5. Click into any investigation to read the **exact federated SQL** the agent wrote — every query, every row count.
+A webhook fires. A Gemini agent runs a discovery-first MCP loop. Coral federates a single SQL query across LaunchDarkly, Sentry, and Vercel. A confidence-scored verdict streams back to your dashboard via Supabase Realtime. Sixty seconds, one button click, one answer.
 
 ---
 
-## How We Use Coral
+## Live
 
-Without Coral, you'd write three separate API clients, pull the data into memory, and join it in JavaScript. We skipped all of that.
+| | URL |
+|---|---|
+| **Dashboard** | https://blast-radius-mu.vercel.app |
+| **API** | https://blast-radius-api-377323041120.us-central1.run.app |
+| **Worker** | https://blast-radius-worker-377323041120.us-central1.run.app |
+| **Repository** | https://github.com/something1703/BlastRadius |
 
-We run **Coral as a sidecar** via stdio and connect our Gemini agent to it using the **Model Context Protocol (MCP)**. The agent doesn't call APIs — it writes cross-source SQL JOINs across LaunchDarkly, Sentry, and Vercel as if they were a single database.
+### Try it without setup
+
+1. Open the dashboard — you'll see investigations already populated.
+2. Click **Run Demo Analysis** on the top right.
+3. Watch a new row appear instantly via Supabase Realtime, then see the verdict slide in ~60 seconds.
+4. Click into the investigation to read the **exact federated SQL** the agent wrote at runtime — every query, every row count, every source touched.
+
+No accounts to connect. No setup. The button hits the real API, which enqueues a real job, which spawns Coral, which queries real LaunchDarkly and Sentry and Vercel, which returns a real verdict.
+
+---
+
+## How Coral powers this
+
+Without Coral, this project is three separate REST clients, three pagination loops, three auth flows, and a thousand lines of JavaScript to join the results in memory. The agent would burn its entire context window on raw JSON before it could correlate anything.
+
+With Coral, every data source is a SQL table and the JOIN happens locally inside DataFusion before the model sees a single row. We run **Coral as a sidecar** in the worker container and connect to it via **MCP over stdio** using `@modelcontextprotocol/sdk`. The agent is given five MCP tools — `list_catalog`, `list_columns`, `describe_table`, `sql`, and `feedback` — and follows a discovery-first workflow: catalog → columns → plan → query → verdict.
+
+A representative query the agent writes at runtime:
 
 ```sql
--- Actual query the Gemini agent writes at runtime:
 SELECT
-  f.key                 AS flag,
-  f.flipped_at          AS flip_time,
-  e.title               AS error_title,
-  e.first_seen,
-  EXTRACT(EPOCH FROM (e.first_seen - f.flipped_at)) / 60 AS lag_minutes
-FROM launchdarkly.flag_evaluations f
-JOIN sentry.issues e
-  ON e.first_seen BETWEEN f.flipped_at
-                      AND f.flipped_at + INTERVAL '2 hours'
-WHERE f.key = 'checkout-v2'
-ORDER BY e.first_seen;
+  ld.name        AS flag_name,
+  ld.date        AS flag_flip_time,
+  s.title        AS sentry_error,
+  s.first_seen   AS error_first_seen,
+  v.uid          AS deploy_id,
+  v.created_at   AS deploy_time
+FROM launchdarkly.audit_log ld
+LEFT JOIN sentry.issues s
+  ON s.first_seen > to_timestamp_millis(ld.date)
+ AND s.first_seen < to_timestamp_millis(ld.date) + INTERVAL '30 minutes'
+LEFT JOIN vercel.deployments v
+  ON v.created_at BETWEEN ld.date - 1800000 AND ld.date + 1800000
+WHERE ld.kind = 'flag'
+  AND ld."from" = '<computed_epoch_ms>'
+  AND ld."to"   = '<computed_epoch_ms>'
+ORDER BY ld.date DESC;
 ```
 
-*This query spans two completely different SaaS APIs and pushes the join down to the Coral engine in milliseconds.*
+That single query federates three completely different SaaS APIs, all auth and pagination handled by Coral below deck, executed in milliseconds. We also wrote a **custom Vercel source spec** (`sources/vercel.yaml`) using `HeaderAuth`, cursor pagination, and `format_timestamp: unix_ms` — without it, the agent can't tell "the flag caused this" apart from "the deploy caused this." That spec is submitted upstream as our Chart New Waters bounty entry.
 
 ---
 
 ## Architecture
 
 ```
-Webhook (LaunchDarkly / Vercel)
+LaunchDarkly / Vercel webhook
         │
         ▼
-  Hono API Server  ──(Zod validation)──▶  BullMQ Queue  (Upstash Redis)
-                                                │
-                                                ▼
-                                     BullMQ Worker
-                                        │
-                                        ├── spawns Coral MCP client (stdio)
-                                        │         │
-                                        │         └── list_catalog → list_columns → execute_query
-                                        │
-                                        └── Gemini 2.5 Flash agent loop
-                                                │
-                                                ▼
-                                       Zod-validated Verdict JSON
-                                                │
-                                         Supabase (Postgres)
-                                                │
-                                         Supabase Realtime
-                                                │
-                                        React / Vite Dashboard
+┌──────────────────┐
+│ Hono API (Zod)   │  validates payload, returns 400 on garbage
+│ Cloud Run        │
+└─────────┬────────┘
+          │ BullMQ
+          ▼
+┌──────────────────┐
+│ Upstash Redis    │  durable queue, retries, exponential backoff
+└─────────┬────────┘
+          │
+          ▼
+┌──────────────────────────────────────┐
+│ Worker (Cloud Run)                   │
+│                                      │
+│  ┌────────────────────────────────┐  │
+│  │ Gemini 2.5 Flash agent loop    │  │
+│  └──────────────┬─────────────────┘  │
+│                 │ MCP (stdio)        │
+│                 ▼                    │
+│  ┌────────────────────────────────┐  │
+│  │ Coral CLI sidecar              │  │
+│  │ (federates LD + Sentry +       │  │
+│  │  Vercel via SQL)               │  │
+│  └──────────────┬─────────────────┘  │
+└─────────────────┼────────────────────┘
+                  │ Zod-validated verdict
+                  ▼
+        ┌──────────────────────┐
+        │ Supabase Postgres    │
+        │ investigations       │
+        │ verdicts             │
+        │ query_runs           │
+        │ + Storage snapshots  │
+        └──────────┬───────────┘
+                   │ Realtime (WAL → WebSocket)
+                   ▼
+        ┌──────────────────────┐
+        │ React + Vite UI      │
+        │ (Vercel)             │
+        └──────────────────────┘
 ```
 
-**What we actually built (not just a script):**
-
-| Layer | Technology | What it does |
+| Layer | Tech | Responsibility |
 |---|---|---|
-| Ingestion | Hono + Zod | Validates webhooks from LD & Vercel |
-| Queue | BullMQ + Upstash Redis | Resilient job queue with exponential backoff |
-| Agent | Gemini 2.5 Flash (MCP) | Discovery-first: introspects schema before writing SQL |
-| Federation | Coral MCP (stdio) | Federated SQL across LaunchDarkly, Sentry, Vercel |
-| Storage | Supabase Postgres | Investigations, verdicts, query_runs tables |
-| Realtime | Supabase Realtime | Live verdict streaming to the UI |
-| Observability | OpenTelemetry | Spans + custom metrics (query count, duration, confidence) |
-| Health | BullMQ repeatable job | Probes Coral sources every 5 minutes |
-| Deploy | Docker + Cloud Run | Multi-stage builds, env-provisioned Coral sources |
+| Webhook ingestion | Hono + Zod | Validate webhooks before they cost anything |
+| Job queue | BullMQ + Upstash Redis | Durable, retryable, observable jobs |
+| Agent | Gemini 2.5 Flash over MCP | Multi-turn tool-using loop, discovery-first |
+| Federation | Coral CLI as MCP sidecar | The entire read plane — SQL across all sources |
+| Custom source | `sources/vercel.yaml` | Adds `vercel.deployments` as a first-class table |
+| Verdict schema | Zod | Structured output validated before persistence |
+| Persistence | Supabase Postgres + Storage | Reproducible runs — every SQL + result snapshot saved |
+| Realtime | Supabase Realtime (WAL → WS) | Live dashboard updates, no polling |
+| Health | BullMQ repeatable job | Probes every Coral source every 5 minutes |
+| Observability | OpenTelemetry | Custom spans per analysis, exported to OTLP |
+| Deploy | Docker multi-stage → Cloud Run + Vercel | Worker container provisions Coral sources from env at boot |
 
 ---
 
-## Project Structure
+## Why this is hard to get right
+
+Three details that took the most debugging and matter most for production:
+
+**Schema discovery before any SQL.** The agent never writes `SELECT *` blindly. The system prompt enforces `list_catalog → list_columns` before any query, because LaunchDarkly's `audit_log` requires `from` and `to` as epoch-ms *strings* and uses `kind = 'flag'` (not `'featureFlag'`, as you'd guess) — both discovered the hard way and now permanently encoded.
+
+**Pre-computed timestamps.** LLMs are unreliable at date arithmetic. We compute `occurred_at - 24h` and `occurred_at + 24h` as epoch ms in TypeScript and inject them as exact strings into the user message. This eliminated an entire class of empty-result bugs.
+
+**Reproducibility as a first-class output.** Every SQL query the agent runs is inserted into `query_runs` with the literal SQL text, and the result is uploaded to Supabase Storage as JSON. Three weeks later, anyone can replay a verdict's exact evidence — point at the snapshot, re-run the query.
+
+---
+
+## Project structure
 
 ```
 packages/
-  api/      — Hono webhook server (LaunchDarkly, Vercel, manual trigger)
-  worker/   — BullMQ worker, Coral MCP client, Gemini agent loop, OTel
-  web/      — React/Vite dashboard with Supabase Realtime
-supabase/   — SQL migrations
-infra/      — Docker + Cloud Run config
+  api/      Hono webhook server (LaunchDarkly, Vercel, manual, demo triggers)
+  worker/   BullMQ worker, Coral MCP client, Gemini agent loop, OTel, health checker
+  web/      React + Vite dashboard with Supabase Realtime
+sources/
+  vercel.yaml   Custom Coral source spec for Vercel deployments
+supabase/
+  schema.sql    Tables, indexes, storage buckets, realtime publications
 ```
 
 ---
 
-## Local Setup
+## Run locally
 
 ```bash
-# 1. Clone & install
 git clone https://github.com/something1703/BlastRadius
 cd BlastRadius
 pnpm install
 
-# 2. Configure environment
 cp .env.example .env
-# Fill in: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
-#          UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN,
-#          GEMINI_API_KEY, LAUNCHDARKLY_API_TOKEN, LAUNCHDARKLY_PROJECT_KEY,
-#          SENTRY_AUTH_TOKEN, SENTRY_ORG_SLUG, SENTRY_DSN, VERCEL_API_TOKEN
+# Fill in:
+#   GEMINI_API_KEY
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY
+#   UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+#   LAUNCHDARKLY_API_TOKEN, LAUNCHDARKLY_PROJECT_KEY
+#   SENTRY_AUTH_TOKEN, SENTRY_ORG_SLUG
+#   VERCEL_API_TOKEN, VERCEL_TEAM_ID
 
-# 3. Run Supabase migrations (from supabase/ folder)
+# Apply the schema in the Supabase SQL editor (supabase/schema.sql)
 
-# 4. Start all services
-pnpm --filter api dev        # API on :3001
-pnpm --filter worker dev     # Background worker
-pnpm --filter web dev        # Dashboard on :5173
+pnpm --filter api dev      # API on :3001
+pnpm --filter worker dev   # Background worker (spawns Coral CLI)
+pnpm --filter web dev      # Dashboard on :5173
 
-# 5. Fire a test webhook
-curl -X POST http://localhost:3001/webhooks/launchdarkly \
+# Trigger a real analysis end to end
+curl -X POST http://localhost:3001/triggers/manual \
   -H "Content-Type: application/json" \
-  -d '{"kind":"flag","name":"checkout-v2","date":'$(date +%s000)'}'
+  -d '{"trigger_type":"flag_flip","identifier":"checkout-v2","occurred_at":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}'
 ```
+
+The worker container's entrypoint script (`packages/worker/entrypoint.sh`) provisions every Coral source from environment variables at boot — credentials never touch the source code or the image.
 
 ---
 
-*Built for the Coral Hackathon 2026*
+## Acknowledgements
+
+Built for the **Pirates of the Coral-bean** hackathon. Coral is genuinely the right primitive for agentic data access — five days of working with it convinced us that federated SQL is the correct abstraction for AI agents touching multi-source data, and we'll build on it again.
+
+Thanks to the WeMakeDevs team for organizing, and to the Coral team for the documentation, the bundled sources, and the source-spec system that made our Vercel integration a YAML file instead of a TypeScript SDK port.
+
+---
+
+🏴‍☠️
