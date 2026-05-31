@@ -47,6 +47,8 @@ export interface Source {
 
 export interface InvestigationWithVerdict extends Investigation {
   verdicts: Verdict[];
+  // Supabase aggregate: .select("*, verdicts(*), query_runs(count)")
+  query_runs?: { count: number }[];
 }
 
 // Badge & cause styling helpers (no emoji — use CAUSE_ICONS for icons)

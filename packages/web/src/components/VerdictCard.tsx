@@ -6,6 +6,7 @@ interface VerdictCardProps {
   verdict: Verdict;
   identifier?: string;
   triggeredAt?: string;
+  queryCount?: number;
   compact?: boolean;
   onClick?: () => void;
 }
@@ -30,6 +31,25 @@ function CauseIcon({ label, size = 16, strokeWidth = 2 }: { label: CauseLabel; s
   const Icon = CAUSE_ICON_MAP[label] ?? HelpCircle;
   return <Icon size={size} strokeWidth={strokeWidth} />;
 }
+
+// Truncate reasoning to the first sentence for the compact row
+function firstSentence(text: string): string {
+  const match = text.match(/^.*?[.!?](?=\s|$)/);
+  return match ? match[0] : text.slice(0, 140) + (text.length > 140 ? "…" : "");
+}
+
+// Semantic color tier based on confidence value
+function confidenceTier(c: number): "high" | "med" | "low" {
+  if (c >= 0.85) return "high";
+  if (c >= 0.65) return "med";
+  return "low";
+}
+
+const TIER_STYLE = {
+  high: { color: "#2ecc8a", bg: "rgba(46,204,138,0.08)",  border: "rgba(46,204,138,0.25)" },
+  med:  { color: "#ffb547", bg: "rgba(255,181,71,0.08)",  border: "rgba(255,181,71,0.25)" },
+  low:  { color: "#9ca3af", bg: "rgba(107,114,128,0.08)", border: "rgba(107,114,128,0.2)" },
+};
 
 function ConfidenceRing({ value, color = "#7c6dff" }: { value: number; color?: string }) {
   const r = 20;
@@ -66,10 +86,12 @@ function ConfidenceRing({ value, color = "#7c6dff" }: { value: number; color?: s
   );
 }
 
-export function VerdictCard({ verdict, identifier, triggeredAt, compact, onClick }: VerdictCardProps) {
+export function VerdictCard({ verdict, identifier, triggeredAt, queryCount, compact, onClick }: VerdictCardProps) {
   const cfg = CAUSE_CONFIG[verdict.cause_label];
   const sty = CAUSE_STYLE[verdict.cause_label] ?? CAUSE_STYLE.inconclusive;
   const conf = Math.round(verdict.cause_confidence * 100);
+  const tier = confidenceTier(verdict.cause_confidence);
+  const tierSty = TIER_STYLE[tier];
 
   /* ——— COMPACT LIST ROW ——— */
   if (compact) {
@@ -133,6 +155,7 @@ export function VerdictCard({ verdict, identifier, triggeredAt, compact, onClick
 
         {/* Body */}
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Top row: identifier + cause badge + confidence badge */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
             <span
               style={{
@@ -153,26 +176,72 @@ export function VerdictCard({ verdict, identifier, triggeredAt, compact, onClick
               <CauseIcon label={verdict.cause_label} size={9} strokeWidth={2.5} />
               {cfg.label}
             </span>
+            {/* Semantic confidence badge */}
+            <span
+              style={{
+                fontSize: "0.65rem",
+                fontWeight: 700,
+                padding: "2px 7px",
+                borderRadius: 99,
+                background: tierSty.bg,
+                border: `1px solid ${tierSty.border}`,
+                color: tierSty.color,
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.03em",
+                flexShrink: 0,
+              }}
+            >
+              {conf}%
+            </span>
           </div>
+
+          {/* First sentence of reasoning */}
           <p
             style={{
               fontSize: "0.78rem",
               color: "#6060a0",
               lineHeight: 1.4,
               overflow: "hidden",
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              marginBottom: 6,
             }}
           >
-            {verdict.cause_reasoning}
+            {firstSentence(verdict.cause_reasoning)}
           </p>
+
+          {/* Footer: sources + query count + time */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {verdict.sources_used.slice(0, 3).map((s) => (
+              <span
+                key={s}
+                style={{
+                  fontSize: "0.65rem",
+                  padding: "1px 6px",
+                  borderRadius: 4,
+                  background: "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.07)",
+                  color: "#4a4a7a",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {s}
+              </span>
+            ))}
+            {queryCount != null && queryCount > 0 && (
+              <span style={{ fontSize: "0.65rem", color: "#3a3a5a", paddingLeft: 2 }}>
+                · {queryCount} SQL {queryCount === 1 ? "query" : "queries"}
+              </span>
+            )}
+            <span style={{ fontSize: "0.65rem", color: "#3a3a5a" }}>
+              · {triggeredAt}
+            </span>
+          </div>
         </div>
 
-        {/* Right: confidence + time */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        {/* Right: confidence ring (uses cause color) */}
+        <div style={{ flexShrink: 0 }}>
           <ConfidenceRing value={conf} color={sty.color} />
-          <span style={{ fontSize: "0.7rem", color: "#4a4a7a", whiteSpace: "nowrap" }}>{triggeredAt}</span>
         </div>
 
         {/* Chevron */}
@@ -227,6 +296,21 @@ export function VerdictCard({ verdict, identifier, triggeredAt, compact, onClick
               <CauseIcon label={verdict.cause_label} size={9} strokeWidth={2.5} />
               {cfg.label}
             </span>
+            {/* Confidence badge on full card too */}
+            <span
+              style={{
+                fontSize: "0.68rem",
+                fontWeight: 700,
+                padding: "2px 8px",
+                borderRadius: 99,
+                background: tierSty.bg,
+                border: `1px solid ${tierSty.border}`,
+                color: tierSty.color,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {conf}% confidence
+            </span>
           </div>
           <div style={{ fontSize: "0.78rem", color: "#6060a0" }}>
             Verdict:{" "}
@@ -278,7 +362,6 @@ export function VerdictCard({ verdict, identifier, triggeredAt, compact, onClick
                       width: `${c.pct_of_impact}%`,
                       background: "linear-gradient(90deg, #5b4eda, #7c6dff)",
                       boxShadow: "0 0 8px rgba(124,109,255,0.4)",
-                      [("--bar-width" as string)]: `${c.pct_of_impact}%`,
                     }}
                   />
                 </div>

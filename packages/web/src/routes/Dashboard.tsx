@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   BarChart2, CheckCircle2, Clock, Flag,
   AlertTriangle, GitBranch, AlertOctagon, HelpCircle,
-  Terminal, Zap, Globe, Loader2, Copy, Check
+  Terminal, Zap, Globe, Loader2, Copy, Check, Play,
 } from "lucide-react";
 import { sb, API_URL } from "../lib/supabase";
 import { subscribeToVerdicts, subscribeToInvestigations } from "../lib/realtime";
@@ -59,11 +59,11 @@ function EmptyState({ onTrigger }: { onTrigger: () => void }) {
           No investigations yet
         </p>
         <p style={{ fontSize: "0.82rem", color: "#4a4a7a", lineHeight: 1.55, maxWidth: 300 }}>
-          Send a webhook from your terminal to watch the Gemini agent correlate your sources live
+          Click "Run Demo Analysis" to trigger the live AI pipeline and watch a verdict appear in real-time
         </p>
       </div>
       <button className="btn-primary" onClick={onTrigger}>
-        <Terminal size={14} strokeWidth={2.2} /> Simulate Webhook
+        <Play size={14} strokeWidth={2.2} /> Run Demo Analysis
       </button>
     </div>
   );
@@ -97,7 +97,7 @@ function RunningRow({ identifier, status, enqueuedAt }: { identifier: string; st
           <span className={`badge badge-${status}`}>{status}</span>
         </div>
         <p style={{ fontSize: "0.78rem", color: "#4a4a7a" }}>
-          Triggered {formatDistanceToNow(new Date(enqueuedAt), { addSuffix: true })} · Agent querying sources
+          Triggered {formatDistanceToNow(new Date(enqueuedAt), { addSuffix: true })} · Gemini agent querying Coral sources
         </p>
       </div>
 
@@ -107,22 +107,29 @@ function RunningRow({ identifier, status, enqueuedAt }: { identifier: string; st
   );
 }
 
-const LD_CURL = `curl -X POST http://localhost:3001/webhooks/launchdarkly \\
+const LD_CURL = `curl -X POST ${API_URL}/webhooks/launchdarkly \\
   -H "Content-Type: application/json" \\
-  -d '{"kind":"flag","name":"checkout-v2","date":'$(date +%s000)'}'`;
+  -d '{"kind":"flag","name":"feature-checkout-v2","date":'$(date +%s000)'}'`;
 
-const VERCEL_CURL = `curl -X POST http://localhost:3001/webhooks/vercel \\
+const VERCEL_CURL = `curl -X POST ${API_URL}/webhooks/vercel \\
   -H "Content-Type: application/json" \\
-  -d '{"type":"deployment","payload":{"deployment":{"name":"api-refactor","url":"https://api.vercel.app"}}}'`;
+  -d '{"type":"deployment","payload":{"deployment":{"name":"blast-radius","url":"https://blast-radius.vercel.app"}}}'`;
 
 export function Dashboard() {
   const navigate = useNavigate();
   const [investigations, setInvestigations] = useState<InvestigationWithVerdict[]>([]);
   const [filter, setFilter] = useState<CauseLabel | "all">("all");
   const [loading, setLoading] = useState(true);
-  const [showWebhookModal, setShowWebhookModal] = useState(false);
+  const [showCurlModal, setShowCurlModal] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 5000);
+  };
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -133,7 +140,7 @@ export function Dashboard() {
   const fetchData = useCallback(async () => {
     const { data } = await sb
       .from("investigations")
-      .select("*, verdicts(*)")
+      .select("*, verdicts(*), query_runs(count)")
       .order("enqueued_at", { ascending: false })
       .limit(50);
     if (data) setInvestigations(data as InvestigationWithVerdict[]);
@@ -169,6 +176,23 @@ export function Dashboard() {
     return () => { unsubV(); unsubI(); };
   }, []);
 
+  const runDemo = async () => {
+    setDemoLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/triggers/demo`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(`Error: ${data.error ?? "Could not reach API"}`);
+      } else {
+        showToast(`Analyzing "${data.identifier}"… Gemini is querying Coral now. Verdict in ~60s`);
+      }
+    } catch {
+      showToast("Could not reach the API server. Is it running?");
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
   const total      = investigations.length;
   const completed  = investigations.filter((i) => i.status === "complete").length;
   const running    = investigations.filter((i) => ["running", "pending"].includes(i.status)).length;
@@ -182,6 +206,30 @@ export function Dashboard() {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+      {/* ── Toast ── */}
+      {toast && (
+        <div
+          className="animate-slide-down"
+          style={{
+            position: "fixed",
+            top: 20, right: 24,
+            zIndex: 200,
+            padding: "13px 20px",
+            borderRadius: 12,
+            background: "rgba(18,18,34,0.97)",
+            border: "1px solid rgba(124,109,255,0.3)",
+            boxShadow: "0 12px 40px rgba(0,0,0,0.5), 0 0 24px rgba(124,109,255,0.12)",
+            color: "#f0f0fa",
+            fontSize: "0.85rem",
+            fontWeight: 600,
+            maxWidth: 380,
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div className="animate-slide-down" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 28, gap: 16 }}>
         <div>
@@ -195,8 +243,21 @@ export function Dashboard() {
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
-          <button className="btn-primary" onClick={() => setShowWebhookModal(true)}>
-            <Terminal size={14} strokeWidth={2.2} /> Simulate Webhook
+          {/* Secondary: API docs (cURL) */}
+          <button
+            className="btn-ghost"
+            onClick={() => setShowCurlModal(true)}
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem" }}
+          >
+            <Terminal size={13} strokeWidth={2} /> API Docs
+          </button>
+          {/* Primary: real demo trigger */}
+          <button className="btn-primary" onClick={runDemo} disabled={demoLoading}>
+            {demoLoading
+              ? <Loader2 size={14} strokeWidth={2} style={{ animation: "spin 1s linear infinite" }} />
+              : <Play size={14} strokeWidth={2.2} />
+            }
+            {demoLoading ? "Starting…" : "Run Demo Analysis"}
           </button>
         </div>
       </div>
@@ -251,15 +312,17 @@ export function Dashboard() {
       {/* ── Investigations List ── */}
       {loading ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {[1, 2, 3].map((i) => <div key={i} className="shimmer" style={{ height: 82, borderRadius: 12 }} />)}
+          {[1, 2, 3].map((i) => <div key={i} className="shimmer" style={{ height: 96, borderRadius: 12 }} />)}
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState onTrigger={() => setShowWebhookModal(true)} />
+        <EmptyState onTrigger={runDemo} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {filtered.map((inv, idx) => {
             const verdict = inv.verdicts[0];
             const isNew = newIds.has(inv.id);
+            // query_runs(count) returns [{count: N}]
+            const queryCount = (inv as any).query_runs?.[0]?.count ?? 0;
             if (verdict) {
               return (
                 <div key={inv.id} className={isNew ? "animate-slide-down" : undefined} style={{ animationDelay: `${idx * 25}ms` }}>
@@ -267,6 +330,7 @@ export function Dashboard() {
                     verdict={verdict}
                     identifier={inv.identifier}
                     triggeredAt={formatDistanceToNow(new Date(inv.enqueued_at), { addSuffix: true })}
+                    queryCount={queryCount}
                     compact
                     onClick={() => navigate(`/investigations/${inv.id}`)}
                   />
@@ -278,68 +342,59 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* ── Webhook Modal ── */}
-      {showWebhookModal && (
+      {/* ── cURL / API Docs Modal (secondary) ── */}
+      {showCurlModal && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowWebhookModal(false); }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowCurlModal(false); }}
         >
           <div className="glass-bright animate-scale-in" style={{ width: "100%", maxWidth: 640, padding: "28px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(124,109,255,0.12)", border: "1px solid rgba(124,109,255,0.22)", display: "flex", alignItems: "center", justifyContent: "center", color: "#7c6dff", boxShadow: "0 0 16px rgba(124,109,255,0.15)" }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: "rgba(124,109,255,0.12)", border: "1px solid rgba(124,109,255,0.22)", display: "flex", alignItems: "center", justifyContent: "center", color: "#7c6dff" }}>
                   <Terminal size={18} strokeWidth={2} />
                 </div>
                 <div>
-                  <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#f0f0fa", letterSpacing: "-0.01em", marginBottom: 2 }}>Simulate Webhook Event</h2>
-                  <p style={{ fontSize: "0.78rem", color: "#4a4a7a" }}>Run these cURL commands in your terminal to trigger the live pipeline</p>
+                  <h2 style={{ fontSize: "1rem", fontWeight: 800, color: "#f0f0fa", letterSpacing: "-0.01em", marginBottom: 2 }}>Trigger via API</h2>
+                  <p style={{ fontSize: "0.78rem", color: "#4a4a7a" }}>cURL commands to fire real webhooks against the live pipeline</p>
                 </div>
               </div>
-              <button onClick={() => setShowWebhookModal(false)} className="btn-ghost" style={{ padding: "6px 12px" }}>Close</button>
+              <button onClick={() => setShowCurlModal(false)} className="btn-ghost" style={{ padding: "6px 12px" }}>Close</button>
             </div>
 
-            {/* LaunchDarkly Webhook */}
-            <div style={{ marginBottom: 24 }}>
+            {/* LaunchDarkly */}
+            <div style={{ marginBottom: 20 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <Flag size={14} color="#405BFF" strokeWidth={2.5} />
-                <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#c0c0e0" }}>LaunchDarkly (Flag Flip)</span>
+                <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#c0c0e0" }}>LaunchDarkly Webhook</span>
               </div>
               <div style={{ position: "relative" }}>
-                <pre style={{ margin: 0, padding: "16px 80px 16px 16px", background: "#0a0a14", border: "1px solid rgba(124,109,255,0.2)", borderRadius: 12, fontSize: "0.75rem", color: "#9eaabe", fontFamily: "var(--font-mono)", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                <pre style={{ margin: 0, padding: "14px 80px 14px 14px", background: "#0a0a14", border: "1px solid rgba(124,109,255,0.2)", borderRadius: 10, fontSize: "0.73rem", color: "#9eaabe", fontFamily: "var(--font-mono)", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
                   {LD_CURL}
                 </pre>
-                <button
-                  className="btn-ghost"
-                  onClick={() => handleCopy(LD_CURL, "ld")}
-                  style={{ position: "absolute", top: 12, right: 12, display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", fontSize: "0.7rem" }}
-                >
-                  {copied === "ld" ? <Check size={12} color="#2ecc8a" /> : <Copy size={12} />}
+                <button className="btn-ghost" onClick={() => handleCopy(LD_CURL, "ld")} style={{ position: "absolute", top: 10, right: 10, display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", fontSize: "0.68rem" }}>
+                  {copied === "ld" ? <Check size={11} color="#2ecc8a" /> : <Copy size={11} />}
                   {copied === "ld" ? "Copied" : "Copy"}
                 </button>
               </div>
             </div>
 
-            {/* Vercel Webhook */}
+            {/* Vercel */}
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                 <GitBranch size={14} color="#e0e0e0" strokeWidth={2.5} />
-                <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#c0c0e0" }}>Vercel (Deployment)</span>
+                <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#c0c0e0" }}>Vercel Deployment Webhook</span>
               </div>
               <div style={{ position: "relative" }}>
-                <pre style={{ margin: 0, padding: "16px 80px 16px 16px", background: "#0a0a14", border: "1px solid rgba(124,109,255,0.2)", borderRadius: 12, fontSize: "0.75rem", color: "#9eaabe", fontFamily: "var(--font-mono)", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                <pre style={{ margin: 0, padding: "14px 80px 14px 14px", background: "#0a0a14", border: "1px solid rgba(124,109,255,0.2)", borderRadius: 10, fontSize: "0.73rem", color: "#9eaabe", fontFamily: "var(--font-mono)", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
                   {VERCEL_CURL}
                 </pre>
-                <button
-                  className="btn-ghost"
-                  onClick={() => handleCopy(VERCEL_CURL, "vercel")}
-                  style={{ position: "absolute", top: 12, right: 12, display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", fontSize: "0.7rem" }}
-                >
-                  {copied === "vercel" ? <Check size={12} color="#2ecc8a" /> : <Copy size={12} />}
+                <button className="btn-ghost" onClick={() => handleCopy(VERCEL_CURL, "vercel")} style={{ position: "absolute", top: 10, right: 10, display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", fontSize: "0.68rem" }}>
+                  {copied === "vercel" ? <Check size={11} color="#2ecc8a" /> : <Copy size={11} />}
                   {copied === "vercel" ? "Copied" : "Copy"}
                 </button>
               </div>
             </div>
-
           </div>
         </div>
       )}

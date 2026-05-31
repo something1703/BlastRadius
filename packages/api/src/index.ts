@@ -140,6 +140,34 @@ app.post("/triggers/manual", async (c) => {
   return c.json({ enqueued: true, jobId: enqueued.id });
 });
 
+// Demo trigger — picks a random identifier from DEMO_IDENTIFIERS env var
+// This calls the real pipeline — no mocking
+const demoIds = (process.env.DEMO_IDENTIFIERS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.post("/triggers/demo", async (c) => {
+  if (demoIds.length === 0) {
+    return c.json({ error: "DEMO_IDENTIFIERS env var is not configured" }, 500);
+  }
+  const identifier = demoIds[Math.floor(Math.random() * demoIds.length)];
+  const job = {
+    trigger_type: "flag_flip" as const,
+    identifier,
+    occurred_at: new Date().toISOString(),
+    hint: `Demo analysis triggered from the dashboard for identifier: ${identifier}`,
+  };
+  const enqueued = await queue.add("analyze", job, {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 100 },
+    removeOnFail: { count: 100 },
+  });
+  console.log(`📥 Demo trigger → enqueued job ${enqueued.id}: ${identifier}`);
+  return c.json({ enqueued: true, identifier, job_id: enqueued.id });
+});
+
 // Health check
 app.get("/health", (c) => {
   return c.json({ ok: true, timestamp: new Date().toISOString() });

@@ -6,7 +6,7 @@ import { VerdictCard } from "../components/VerdictCard";
 import { SqlBlock } from "../components/SqlBlock";
 import { format, formatDistanceToNow } from "date-fns";
 import { CAUSE_CONFIG } from "../lib/types";
-import { ArrowLeft, Check, Loader2, Clock, AlertTriangle, GitBranch, AlertOctagon, CheckCircle2, HelpCircle } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Clock, AlertTriangle, GitBranch, AlertOctagon, CheckCircle2, HelpCircle, Database } from "lucide-react";
 import type { CauseLabel } from "../lib/types";
 
 const CAUSE_STYLE: Record<string, { color: string }> = {
@@ -233,12 +233,50 @@ export function InvestigationDetail() {
       {/* ── SQL Evidence ── */}
       {queryRuns.length > 0 && (
         <div className="animate-slide-up delay-2">
+          {/* Coral callout — explains what Coral did */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              borderRadius: 10,
+              background: "rgba(124,109,255,0.06)",
+              border: "1px solid rgba(124,109,255,0.15)",
+              marginBottom: 14,
+            }}
+          >
+            <Database size={13} color="#7c6dff" strokeWidth={2} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: "0.75rem", color: "#7070a0", lineHeight: 1.4 }}>
+              All {queryRuns.length} {queryRuns.length === 1 ? "query" : "queries"} ran as federated SQL through Coral's local engine across{" "}
+              {verdict?.sources_used.length ?? 0} source{(verdict?.sources_used.length ?? 0) !== 1 ? "s" : ""} — no per-API rate limits, no separate clients.
+            </span>
+            {/* Sources chips */}
+            {verdict?.sources_used.map((s) => (
+              <span
+                key={s}
+                style={{
+                  fontSize: "0.65rem",
+                  padding: "2px 7px",
+                  borderRadius: 4,
+                  background: "rgba(124,109,255,0.1)",
+                  border: "1px solid rgba(124,109,255,0.2)",
+                  color: "#a095ff",
+                  fontFamily: "var(--font-mono)",
+                  flexShrink: 0,
+                }}
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
             <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#3a3a6a", letterSpacing: "0.09em", textTransform: "uppercase" }}>
-              Evidence
+              SQL Evidence
             </div>
             <span style={{ fontSize: "0.7rem", padding: "2px 8px", borderRadius: 6, background: "rgba(124,109,255,0.1)", border: "1px solid rgba(124,109,255,0.2)", color: "#a095ff", fontFamily: "var(--font-mono)" }}>
-              {queryRuns.length} queries
+              {queryRuns.length} {queryRuns.length === 1 ? "query" : "queries"}
             </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

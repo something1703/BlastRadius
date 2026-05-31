@@ -8,6 +8,7 @@
         "start": "node dist/queue/worker.js",
         "dev": "tsx --watch src/queue/worker.ts",
         "health-check": "tsx src/queue/health-worker.ts",
+        "seed:demos": "tsx src/scripts/seed-demos.ts",
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "keywords": [],
