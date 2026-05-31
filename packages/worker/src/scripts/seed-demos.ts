@@ -51,7 +51,7 @@ const scenarios = [
   {
     label_hint: "deploy",         // Agent should find: Vercel deploy, no flag flip nearby
     trigger_type: "deploy" as const,
-    identifier: "blast-radius",   // ← CHANGE THIS to your actual Vercel project name
+    identifier: "blast-radius-mu",
     occurred_at_offset_min: -120, // 2h ago — tune to when you pushed the deploy commit
   },
   {

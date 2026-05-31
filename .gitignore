@@ -14,3 +14,7 @@ coral-bin/
 sql-experiments/
 fixtures/
 packages/LOGO/
+
+# Cloud Run env var files (contain live secrets)
+infra/api-env.yaml
+infra/worker-env.yaml

@@ -208,4 +208,19 @@ worker.on("error", (err) => {
 // Start the source health checker as a co-process
 startHealthWorker();
 
+// ── Cloud Run health server ───────────────────────────────────────────────────
+// Cloud Run requires the container to listen on PORT within the startup timeout.
+// The BullMQ worker itself doesn't serve HTTP, so we bind a minimal server here.
+import http from "node:http";
+
+const PORT = process.env.PORT ?? "8080";
+const healthServer = http.createServer((_req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true, service: "blast-radius-worker", ts: new Date().toISOString() }));
+});
+healthServer.listen(PORT, () => {
+  log.info(`Health server listening on :${PORT}`);
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 log.info("🏴‍☠️ Blast Radius worker started, waiting for jobs...");

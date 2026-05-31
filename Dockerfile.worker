@@ -1,74 +1,88 @@
 # ─────────────────────────────────────────────────────────────
-# Stage 1: deps — install system deps + Coral + pnpm packages
+# Worker Dockerfile — build context is the REPO ROOT
+# so both packages/worker/** and sources/vercel.yaml are accessible.
+#
+# Uses Ubuntu 24.04 as the runtime base (glibc 2.39) because the
+# Coral binary requires GLIBC_2.39 which Debian Bookworm doesn't have.
 # ─────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS deps
+
+# Stage 1: deps — install system deps + Coral CLI + pnpm packages
+# Use Ubuntu 24.04 here too so Coral install script works in this stage
+FROM ubuntu:24.04 AS deps
 WORKDIR /app
 
-# System deps: curl for Coral install, ca-certs for TLS
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     bash \
+    xz-utils \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y nodejs \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Coral CLI
 RUN curl -fsSL https://withcoral.com/install.sh | bash && \
     mv /root/.coral/bin/coral /usr/local/bin/coral 2>/dev/null || \
     find /root -name "coral" -type f -exec mv {} /usr/local/bin/coral \; 2>/dev/null || \
-    echo "⚠️  Coral binary not found at expected path — check install script output"
+    echo "Coral binary not found at expected path — check install script output"
 
 # Enable pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# Copy lockfiles and install dependencies
-COPY package.json pnpm-lock.yaml* ./
+# Copy worker package files and install deps
+COPY packages/worker/package.json packages/worker/pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile --prod=false
 
-# ─────────────────────────────────────────────────────────────
 # Stage 2: build — compile TypeScript
-# ─────────────────────────────────────────────────────────────
 FROM deps AS build
 WORKDIR /app
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY packages/worker/tsconfig.json ./tsconfig.json
+COPY packages/worker/src ./src
 RUN pnpm exec tsc --outDir dist
 
-# ─────────────────────────────────────────────────────────────
-# Stage 3: runtime — lean final image
-# ─────────────────────────────────────────────────────────────
-FROM node:20-bookworm-slim AS runtime
+# Stage 3: runtime — Ubuntu 24.04 (glibc 2.39 for Coral binary)
+FROM ubuntu:24.04 AS runtime
 WORKDIR /app
 
-# Only runtime system deps
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     bash \
+    curl \
   && rm -rf /var/lib/apt/lists/*
 
-# Copy Coral binary from deps stage
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get install -y nodejs \
+  && rm -rf /var/lib/apt/lists/*
+
+# Coral binary from deps stage (needs glibc 2.39 — Ubuntu 24.04 has it)
 COPY --from=deps /usr/local/bin/coral /usr/local/bin/coral
 
-# Copy node_modules (prod only for smaller image)
+# node_modules + compiled output
 COPY --from=deps /app/node_modules ./node_modules
-
-# Copy compiled JS
 COPY --from=build /app/dist ./dist
 
-# Copy package.json for "type": "module" resolution
-COPY package.json ./
+# package.json (needed for "type": "module" resolution)
+COPY packages/worker/package.json ./package.json
 
-# Copy entrypoint and source spec files
-COPY entrypoint.sh ./entrypoint.sh
+# Entrypoint script
+COPY packages/worker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
-# Create sources dir and bake in vercel.yaml spec
+# Bake in the vercel source spec (used by entrypoint.sh)
 RUN mkdir -p ./sources
 COPY sources/vercel.yaml ./sources/vercel.yaml
 
 ENV NODE_ENV=production
 
-# Health check: ensure worker process is alive
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "process.exit(0)" || exit 1
 
