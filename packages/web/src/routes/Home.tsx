@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
 import {
-  Flag, Bug, Database, Sparkles, Zap, Network, Play, ArrowRight,
+  Flag, Bug, Database, Sparkles, Zap, Play, ArrowRight,
   Radio, Star, GitBranch, CheckCircle2, BarChart2, ChevronRight,
   Terminal,
 } from "lucide-react";

@@ -1,5 +1,5 @@
 import { NavLink, Link } from "react-router-dom";
-import { LayoutDashboard, Activity, Database, Settings, Zap } from "lucide-react";
+import { LayoutDashboard, Activity, Database, Settings } from "lucide-react";
 
 const navItems = [
   { to: "/dashboard", label: "Dashboard", Icon: LayoutDashboard, end: true },

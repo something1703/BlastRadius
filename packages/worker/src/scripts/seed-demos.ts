@@ -45,7 +45,7 @@ const scenarios = [
   {
     label_hint: "flag",           // Agent should find: flag flip → Sentry errors shortly after
     trigger_type: "flag_flip" as const,
-    identifier: "feature-checkout-v2",
+    identifier: "feature-checkout-v-2",
     occurred_at_offset_min: -40,  // 40 min ago — tune to when you flipped this flag
   },
   {
@@ -63,7 +63,7 @@ const scenarios = [
   {
     label_hint: "neither",        // Agent should find: flag flip but no correlated errors/deploys
     trigger_type: "flag_flip" as const,
-    identifier: "feature-new-pricing-modal",
+    identifier: "the-pricing-flag",
     occurred_at_offset_min: -240, // 4h ago — a quiet time with no incidents
   },
   {

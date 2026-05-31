@@ -5,7 +5,6 @@ import type { Investigation, Verdict, QueryRun } from "../lib/types";
 import { VerdictCard } from "../components/VerdictCard";
 import { SqlBlock } from "../components/SqlBlock";
 import { format, formatDistanceToNow } from "date-fns";
-import { CAUSE_CONFIG } from "../lib/types";
 import { ArrowLeft, Check, Loader2, Clock, AlertTriangle, GitBranch, AlertOctagon, CheckCircle2, HelpCircle, Database } from "lucide-react";
 import type { CauseLabel } from "../lib/types";
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { sb } from "../lib/supabase";
 import type { Source } from "../lib/types";
 import { formatDistanceToNow } from "date-fns";
@@ -119,7 +119,7 @@ export function Sources() {
                       className={src.status === "healthy" ? "animate-pulse-dot" : undefined}
                       style={{ width: 7, height: 7, borderRadius: "50%", background: statusCfg.dot, boxShadow: statusCfg.glow, flexShrink: 0 }}
                     />
-                    <StatusIcon size={12} color={statusCfg.dot} strokeWidth={2.2} />
+                    {React.createElement(StatusIcon as any, { size: 12, style: { color: statusCfg.dot }, strokeWidth: 2.2 })}
                     <span style={{ fontSize: "0.7rem", fontWeight: 700, color: statusCfg.textColor, letterSpacing: "0.04em" }}>
                       {statusCfg.label.toUpperCase()}
                     </span>

@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { sb, API_URL } from "../lib/supabase";
 import type { Source } from "../lib/types";
 import { formatDistanceToNow } from "date-fns";
 import {
   Server, Radio, Flag, Bug, CheckCircle2, XCircle,
-  Wifi, WifiOff, RefreshCw, Database, Triangle,
+  Wifi, WifiOff, RefreshCw, Database,
 } from "lucide-react";
 
 // Source-specific icon components
@@ -199,7 +199,8 @@ export function Settings() {
                         className={src.status === "healthy" ? "animate-pulse-dot" : undefined}
                         style={{ width: 7, height: 7, borderRadius: "50%", background: statusCfg.dot, boxShadow: statusCfg.glow }}
                       />
-                      <StatusIcon size={13} color={statusCfg.dot} strokeWidth={2} />
+                      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                      {React.createElement(StatusIcon as any, { size: 12, style: { color: statusCfg.dot }, strokeWidth: 2.2 })}
                       <span style={{ fontSize: "0.72rem", fontWeight: 600, color: statusCfg.dot }}>{statusCfg.label}</span>
                     </div>
                   </div>
