@@ -1,0 +1,65 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Blast Radius — Local Docker Compose
+#
+# Useful for testing the Docker images before deploying to Cloud Run.
+# Uses .env for secrets (loaded automatically by docker-compose).
+#
+# Usage:
+#   docker compose up --build
+#
+# The web frontend still runs via `pnpm run dev` in packages/web separately
+# since it doesn't need containerizing for local testing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  api:
+    build:
+      context: ./packages/api
+      dockerfile: Dockerfile
+    ports:
+      - "3001:8080"
+    environment:
+      PORT: "8080"
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./packages/worker
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # Redis
+      UPSTASH_REDIS_REST_URL: ${UPSTASH_REDIS_REST_URL}
+      UPSTASH_REDIS_REST_TOKEN: ${UPSTASH_REDIS_REST_TOKEN}
+      # Supabase
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      # AI
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_VERDICT_MODEL: ${GEMINI_VERDICT_MODEL:-gemini-2.5-flash}
+      # Source credentials (for `coral source add` at boot)
+      LAUNCHDARKLY_API_TOKEN: ${LAUNCHDARKLY_API_TOKEN:-}
+      LAUNCHDARKLY_PROJECT_KEY: ${LAUNCHDARKLY_PROJECT_KEY:-}
+      SENTRY_AUTH_TOKEN: ${SENTRY_AUTH_TOKEN:-}
+      SENTRY_ORG_SLUG: ${SENTRY_ORG_SLUG:-}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      VERCEL_API_TOKEN: ${VERCEL_API_TOKEN:-}
+      # Notifications
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      # OTel (optional — skipped if not set)
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_AUTH_HEADER: ${OTEL_AUTH_HEADER:-}
+      CORAL_OTEL_EXPORTER_OTLP_ENDPOINT: ${CORAL_OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      CORAL_OTEL_EXPORTER_OTLP_HEADERS: ${CORAL_OTEL_EXPORTER_OTLP_HEADERS:-}
+    restart: on-failure

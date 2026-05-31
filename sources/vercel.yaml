@@ -1,0 +1,135 @@
+name: vercel
+version: 0.1.0
+dsl_version: 3
+backend: http
+description: Query Vercel deployments and projects via the Vercel REST API.
+base_url: "https://api.vercel.com"
+
+inputs:
+  VERCEL_TOKEN:
+    kind: secret
+    hint: Vercel API token (from vercel.com/account/tokens)
+
+auth:
+  type: HeaderAuth
+  headers:
+    - name: Authorization
+      from: template
+      template: "Bearer {{input.VERCEL_TOKEN}}"
+
+request_headers:
+  - name: Accept
+    from: literal
+    value: application/json
+
+test_queries:
+  - SELECT uid, name, state FROM vercel.deployments LIMIT 1
+
+tables:
+  - name: deployments
+    description: Deployments across all projects in the Vercel account.
+    guide: |
+      Lists recent deployments. Each row represents a single deployment with its state,
+      timestamps, and metadata. Useful for correlating deploy times with incidents.
+    request:
+      method: GET
+      path: /v6/deployments
+      query:
+        - name: limit
+          from: literal
+          value: "100"
+    response:
+      rows_path: [deployments]
+      row_strategy: direct
+    pagination:
+      mode: none
+    columns:
+      - name: uid
+        type: Utf8
+        nullable: false
+        description: Unique deployment ID.
+        expr: {kind: path, path: [uid]}
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Project name of the deployment.
+        expr: {kind: path, path: [name]}
+      - name: url
+        type: Utf8
+        nullable: true
+        description: URL of the deployment.
+        expr: {kind: path, path: [url]}
+      - name: state
+        type: Utf8
+        nullable: true
+        description: "Deployment state: QUEUED, BUILDING, READY, ERROR, CANCELED."
+        expr: {kind: path, path: [state]}
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: When the deployment was created (unix ms).
+        expr: {kind: path, path: [created]}
+      - name: ready_at
+        type: Int64
+        nullable: true
+        description: When the deployment became ready (unix ms).
+        expr: {kind: path, path: [ready]}
+      - name: project_id
+        type: Utf8
+        nullable: true
+        description: Project ID.
+        expr: {kind: path, path: [projectId]}
+      - name: target
+        type: Utf8
+        nullable: true
+        description: "Deployment target: production or preview."
+        expr: {kind: path, path: [target]}
+      - name: source
+        type: Utf8
+        nullable: true
+        description: "Source of the deployment: cli, git, api."
+        expr: {kind: path, path: [source]}
+
+  - name: projects
+    description: Projects in the Vercel account.
+    guide: |
+      Lists all projects. Each row represents a single project with its
+      framework, creation time, and update time.
+    request:
+      method: GET
+      path: /v9/projects
+      query:
+        - name: limit
+          from: literal
+          value: "100"
+    response:
+      rows_path: [projects]
+      row_strategy: direct
+    pagination:
+      mode: none
+    columns:
+      - name: id
+        type: Utf8
+        nullable: false
+        description: Project ID.
+        expr: {kind: path, path: [id]}
+      - name: name
+        type: Utf8
+        nullable: false
+        description: Project name.
+        expr: {kind: path, path: [name]}
+      - name: framework
+        type: Utf8
+        nullable: true
+        description: Detected framework.
+        expr: {kind: path, path: [framework]}
+      - name: created_at
+        type: Int64
+        nullable: true
+        description: When the project was created (unix ms).
+        expr: {kind: path, path: [createdAt]}
+      - name: updated_at
+        type: Int64
+        nullable: true
+        description: When the project was last updated (unix ms).
+        expr: {kind: path, path: [updatedAt]}

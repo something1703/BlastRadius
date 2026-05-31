@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "demo": "tsx scripts/demo-seed.ts",
+    "dev:api": "pnpm --filter api dev",
+    "dev:worker": "pnpm --filter worker dev",
+    "dev:web": "pnpm --filter web dev"
+  },
+  "dependencies": {
+    "@sentry/node": "^10.55.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.3",
+    "dotenv": "^17.4.2"
+  }
+}

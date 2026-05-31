@@ -1,0 +1,16 @@
+node_modules
+.env*
+!.env.example
+dist
+.coral
+*.log
+
+# Coral binary (too large, users download their own)
+coral.zip
+coral.exe
+coral-bin/
+
+# Dev artefacts
+sql-experiments/
+fixtures/
+packages/LOGO/
