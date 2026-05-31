@@ -25,11 +25,26 @@ const log = pino({ name: "health-worker" });
 
 const HEALTH_QUEUE = "source-health";
 
-// The schema names Coral exposes per source
-const SOURCE_PROBES: { name: string; schema: string; displayName: string }[] = [
-  { name: "launchdarkly", schema: "launchdarkly", displayName: "LaunchDarkly" },
-  { name: "sentry",       schema: "sentry",        displayName: "Sentry" },
-  { name: "vercel",       schema: "vercel",        displayName: "Vercel" },
+// The schema names Coral exposes per source, with a known-good probe query
+const SOURCE_PROBES: { name: string; schema: string; displayName: string; probeQuery: string }[] = [
+  {
+    name: "launchdarkly",
+    schema: "launchdarkly",
+    displayName: "LaunchDarkly",
+    probeQuery: `SELECT kind FROM launchdarkly.audit_log LIMIT 1`,
+  },
+  {
+    name: "sentry",
+    schema: "sentry",
+    displayName: "Sentry",
+    probeQuery: `SELECT title FROM sentry.issues LIMIT 1`,
+  },
+  {
+    name: "vercel",
+    schema: "vercel",
+    displayName: "Vercel",
+    probeQuery: `SELECT state FROM vercel.deployments LIMIT 1`,
+  },
 ];
 
 async function runHealthChecks() {
@@ -59,10 +74,11 @@ async function runHealthChecks() {
   for (const src of SOURCE_PROBES) {
     const now = new Date().toISOString();
     try {
-      // Run a lightweight probe: list tables in the source schema
-      const result = (await coral.callTool("list_tables", { schema: src.schema })) as {
-        content?: { text?: string }[];
-      };
+      // Use the source-specific probe query against a known real table.
+      // If Coral can execute it, the source is healthy.
+      const result = (await coral.callTool("sql", {
+        sql: src.probeQuery,
+      })) as { content?: { text?: string }[] };
 
       const hasContent = result?.content && result.content.length > 0;
 
